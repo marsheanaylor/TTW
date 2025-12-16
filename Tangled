@@ -1,6 +1,1135 @@
-git init
-git add .
-git commit -m "Initial Tangled Wardrobe site"
-git branch -M main
-git remote add origin https://github.com/YOURUSERNAME/tangled-wardrobe.git
-git push -u origin main
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ================================
+# The Tangled Wardrobe by Andi
+# Full Website Builder (Next.js App Router)
+# - Tailwind brand colors
+# - Stripe Payment Links + Zelle page
+# - Order Request Form (emails you via Resend) + CUSTOMER UPLOAD field
+# - Wholesale Inquiry Form (logo upload via UploadThing + emails you link)
+# - SEO (metadata + LocalBusiness JSON-LD + sitemap + robots)
+# - Analytics (GA4 + Meta Pixel + TikTok Pixel)
+# ================================
+
+require_cmd () {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required command: $1"
+    echo "Please install it and re-run."
+    exit 1
+  }
+}
+
+require_cmd node
+require_cmd npm
+require_cmd npx
+
+echo ""
+echo "=== The Tangled Wardrobe by Andi — Website Builder (with customer uploads) ==="
+echo "This script will create a new Next.js project in ./tangled-wardrobe"
+echo ""
+
+read -r -p "Project folder name [tangled-wardrobe]: " PROJECT_DIR
+PROJECT_DIR=${PROJECT_DIR:-tangled-wardrobe}
+
+if [ -d "$PROJECT_DIR" ]; then
+  echo "Folder '$PROJECT_DIR' already exists. Please move/delete it or choose a different name."
+  exit 1
+fi
+
+# ---- Collect settings (no code editing required) ----
+echo ""
+echo "=== Site & business info ==="
+read -r -p "Public site URL (example: https://thetangledwardrobe.com): " SITE_URL
+read -r -p "Notification email TO (where form submissions should be sent): " NOTIFY_TO
+read -r -p "Notification email FROM (Resend sender, default: onboarding@resend.dev): " NOTIFY_FROM
+NOTIFY_FROM=${NOTIFY_FROM:-"Tangled Wardrobe <onboarding@resend.dev>"}
+
+echo ""
+echo "=== Payments ==="
+read -r -p "Stripe Payment Link (T-Shirt): " STRIPE_SHIRT
+read -r -p "Stripe Payment Link (Hoodie/Crewneck): " STRIPE_HOODIE
+read -r -p "Stripe Payment Link (Custom Deposit): " STRIPE_DEPOSIT
+read -r -p "Zelle recipient name (example: Andi Naylor): " ZELLE_NAME
+read -r -p "Zelle recipient email or phone: " ZELLE_RECIPIENT
+
+echo ""
+echo "=== Social links (shop via social) ==="
+read -r -p "TikTok Shop / TikTok profile URL: " TIKTOK_URL
+read -r -p "Facebook Page/Shop URL: " FB_URL
+
+echo ""
+echo "=== Analytics (optional but recommended) ==="
+read -r -p "Google Analytics Measurement ID (GA4) (example: G-XXXX) [skip to leave blank]: " GA_ID
+read -r -p "Meta Pixel ID [skip to leave blank]: " META_PIXEL
+read -r -p "TikTok Pixel ID [skip to leave blank]: " TIKTOK_PIXEL
+
+echo ""
+echo "=== Email + Upload providers ==="
+read -r -p "Resend API Key (starts with re_) : " RESEND_KEY
+read -r -p "UploadThing SECRET: " UT_SECRET
+read -r -p "UploadThing APP_ID: " UT_APP_ID
+
+echo ""
+echo "Creating Next.js app (TypeScript, App Router)..."
+npx create-next-app@latest "$PROJECT_DIR" --ts --eslint --app --no-src-dir --no-import-alias --use-npm --tailwind
+
+cd "$PROJECT_DIR"
+
+echo ""
+echo "Installing dependencies..."
+npm i resend zod uploadthing @uploadthing/react
+
+# ----------------------------
+# Write env
+# ----------------------------
+cat > .env.local <<EOF
+# ===== The Tangled Wardrobe by Andi =====
+
+# Email (Resend)
+RESEND_API_KEY="$RESEND_KEY"
+NOTIFY_EMAIL_TO="$NOTIFY_TO"
+NOTIFY_EMAIL_FROM="$NOTIFY_FROM"
+
+# UploadThing
+UPLOADTHING_SECRET="$UT_SECRET"
+UPLOADTHING_APP_ID="$UT_APP_ID"
+
+# Analytics
+NEXT_PUBLIC_GA_MEASUREMENT_ID="$GA_ID"
+NEXT_PUBLIC_META_PIXEL_ID="$META_PIXEL"
+NEXT_PUBLIC_TIKTOK_PIXEL_ID="$TIKTOK_PIXEL"
+
+# Social links
+NEXT_PUBLIC_TIKTOK_SHOP_URL="$TIKTOK_URL"
+NEXT_PUBLIC_FACEBOOK_SHOP_URL="$FB_URL"
+
+# Payment links
+NEXT_PUBLIC_STRIPE_PAYMENTLINK_SHIRT="$STRIPE_SHIRT"
+NEXT_PUBLIC_STRIPE_PAYMENTLINK_HOODIE="$STRIPE_HOODIE"
+NEXT_PUBLIC_STRIPE_PAYMENTLINK_CUSTOM_DEPOSIT="$STRIPE_DEPOSIT"
+
+# Zelle
+NEXT_PUBLIC_ZELLE_RECIPIENT_NAME="$ZELLE_NAME"
+NEXT_PUBLIC_ZELLE_RECIPIENT="$ZELLE_RECIPIENT"
+
+# Site URL (used for SEO)
+NEXT_PUBLIC_SITE_URL="$SITE_URL"
+EOF
+
+# ----------------------------
+# Tailwind brand colors
+# ----------------------------
+cat > tailwind.config.ts <<'EOF'
+import type { Config } from "tailwindcss";
+
+const config: Config = {
+  content: [
+    "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./components/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        purple: "#7B3FE4",
+        pink: "#FF4FA3",
+        teal: "#2EC4C6",
+      },
+    },
+  },
+  plugins: [],
+};
+export default config;
+EOF
+
+# ----------------------------
+# Global styles
+# ----------------------------
+cat > app/globals.css <<'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+EOF
+
+# ----------------------------
+# Components
+# ----------------------------
+mkdir -p app/components
+
+cat > app/components/Navbar.tsx <<'EOF'
+import Link from "next/link";
+
+export default function Navbar() {
+  return (
+    <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b">
+      <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <Link href="/" className="font-extrabold tracking-tight text-lg">
+          The Tangled Wardrobe <span className="text-purple">by Andi</span>
+        </Link>
+
+        <div className="hidden md:flex gap-6 text-sm font-semibold">
+          <a href="#shop" className="hover:text-purple">Shop</a>
+          <Link href="/order" className="hover:text-purple">Custom Order</Link>
+          <Link href="/payments" className="hover:text-purple">Payments</Link>
+          <Link href="/vendors" className="hover:text-purple">Vendors</Link>
+          <Link href="/wholesale" className="hover:text-purple">Wholesale</Link>
+        </div>
+
+        <div className="md:hidden text-sm">
+          <Link href="/order" className="font-semibold text-purple">Order</Link>
+        </div>
+      </div>
+    </nav>
+  );
+}
+EOF
+
+cat > app/components/Footer.tsx <<'EOF'
+export default function Footer() {
+  return (
+    <footer className="border-t py-10">
+      <div className="max-w-6xl mx-auto px-6 text-sm text-gray-600 flex flex-col gap-2">
+        <p className="font-semibold text-gray-800">Be Bold. Be Confident. Go Get Tangled.</p>
+        <p>© {new Date().getFullYear()} The Tangled Wardrobe by Andi • Evans, Georgia</p>
+      </div>
+    </footer>
+  );
+}
+EOF
+
+cat > app/components/Hero.tsx <<'EOF'
+export default function Hero() {
+  const tiktok = process.env.NEXT_PUBLIC_TIKTOK_SHOP_URL || "https://www.tiktok.com";
+  const facebook = process.env.NEXT_PUBLIC_FACEBOOK_SHOP_URL || "https://www.facebook.com";
+
+  return (
+    <section className="bg-gradient-to-b from-purple to-black text-white">
+      <div className="max-w-6xl mx-auto px-6 py-20">
+        <p className="inline-flex items-center gap-2 text-xs font-semibold bg-white/10 px-3 py-1 rounded-full">
+          Custom Apparel • DTF Printing • Established 2023
+        </p>
+
+        <h1 className="mt-6 text-4xl md:text-6xl font-extrabold leading-tight">
+          Be Bold. <span className="text-pink">Be Confident.</span>
+          <br />
+          Go Get Tangled.
+        </h1>
+
+        <p className="mt-5 max-w-2xl text-white/85">
+          Woman-owned custom apparel and DTF printing in Evans, Georgia. Designed with heart, made with purpose.
+        </p>
+
+        <div className="mt-8 flex flex-col sm:flex-row gap-3">
+          <a
+            href={tiktok}
+            target="_blank"
+            rel="noreferrer"
+            className="px-6 py-3 rounded-full bg-white text-black font-semibold text-center"
+          >
+            Shop on TikTok
+          </a>
+          <a
+            href={facebook}
+            target="_blank"
+            rel="noreferrer"
+            className="px-6 py-3 rounded-full bg-pink text-white font-semibold text-center"
+          >
+            Shop on Facebook
+          </a>
+          <a
+            href="/order"
+            className="px-6 py-3 rounded-full border border-white/30 text-white font-semibold text-center"
+          >
+            Request a Custom Order
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+EOF
+
+cat > app/components/Products.tsx <<'EOF'
+import Link from "next/link";
+
+export default function Products() {
+  return (
+    <section id="shop" className="py-16">
+      <div className="max-w-6xl mx-auto px-6">
+        <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight text-center">
+          Shop the Brand
+        </h2>
+        <p className="mt-3 text-gray-600 text-center max-w-2xl mx-auto">
+          Social-first shopping + quick checkout. Need something custom? Use the order request form.
+        </p>
+
+        <div className="mt-10 grid md:grid-cols-3 gap-6">
+          <div className="border rounded-2xl p-6 hover:shadow-sm transition">
+            <h3 className="text-xl font-bold">T-Shirts</h3>
+            <p className="mt-2 text-gray-600">Bold everyday staples. Clean prints. Strong color.</p>
+            <Link href="/payments" className="mt-5 inline-block font-semibold text-purple">Quick checkout →</Link>
+          </div>
+
+          <div className="border rounded-2xl p-6 hover:shadow-sm transition">
+            <h3 className="text-xl font-bold">Hoodies / Crewnecks</h3>
+            <p className="mt-2 text-gray-600">Cozy, premium feel. Perfect for drops and teams.</p>
+            <Link href="/payments" className="mt-5 inline-block font-semibold text-purple">Quick checkout →</Link>
+          </div>
+
+          <div className="border rounded-2xl p-6 hover:shadow-sm transition bg-gray-50">
+            <h3 className="text-xl font-bold">Custom Orders</h3>
+            <p className="mt-2 text-gray-600">
+              Events, brands, teams, gifts—tell me your idea and I’ll bring it to life.
+            </p>
+            <Link href="/order" className="mt-5 inline-block font-semibold text-purple">Request custom →</Link>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+EOF
+
+cat > app/components/PaymentLinks.tsx <<'EOF'
+export default function PaymentLinks() {
+  const shirt = process.env.NEXT_PUBLIC_STRIPE_PAYMENTLINK_SHIRT || "#";
+  const hoodie = process.env.NEXT_PUBLIC_STRIPE_PAYMENTLINK_HOODIE || "#";
+  const deposit = process.env.NEXT_PUBLIC_STRIPE_PAYMENTLINK_CUSTOM_DEPOSIT || "#";
+
+  return (
+    <section className="py-16 bg-gray-50">
+      <div className="max-w-6xl mx-auto px-6">
+        <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight text-center">
+          Quick Checkout (Stripe)
+        </h2>
+        <p className="mt-3 text-gray-600 text-center max-w-2xl mx-auto">
+          Use Stripe payment links for fast checkout. Prefer Zelle? We’ve got you.
+        </p>
+
+        <div className="mt-10 grid md:grid-cols-3 gap-6">
+          <a href={shirt} target="_blank" rel="noreferrer" className="border rounded-2xl p-6 bg-white hover:shadow-sm transition">
+            <h3 className="text-xl font-bold">T-Shirt</h3>
+            <p className="mt-2 text-gray-600">Pay securely in seconds.</p>
+            <span className="mt-5 inline-block font-semibold text-purple">Pay now →</span>
+          </a>
+
+          <a href={hoodie} target="_blank" rel="noreferrer" className="border rounded-2xl p-6 bg-white hover:shadow-sm transition">
+            <h3 className="text-xl font-bold">Hoodie / Crewneck</h3>
+            <p className="mt-2 text-gray-600">Pay securely in seconds.</p>
+            <span className="mt-5 inline-block font-semibold text-purple">Pay now →</span>
+          </a>
+
+          <a href={deposit} target="_blank" rel="noreferrer" className="border rounded-2xl p-6 bg-white hover:shadow-sm transition">
+            <h3 className="text-xl font-bold">Custom Order Deposit</h3>
+            <p className="mt-2 text-gray-600">Reserve your spot on the schedule.</p>
+            <span className="mt-5 inline-block font-semibold text-purple">Pay deposit →</span>
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+EOF
+
+cat > app/components/EmailCapture.tsx <<'EOF'
+"use client";
+
+import { useState } from "react";
+
+export default function EmailCapture() {
+  const [email, setEmail] = useState("");
+  const notifyTo = process.env.NEXT_PUBLIC_ZELLE_RECIPIENT || "";
+
+  return (
+    <section className="py-16">
+      <div className="max-w-3xl mx-auto px-6 text-center">
+        <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">
+          Get early access to drops & order openings
+        </h2>
+        <p className="mt-3 text-gray-600">
+          Join the Tangled list 🤍 (No spam. Unsubscribe anytime.)
+        </p>
+
+        <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            type="email"
+            placeholder="you@email.com"
+            className="border rounded-full px-5 py-3 w-full sm:w-96"
+          />
+          <a
+            className="rounded-full bg-pink text-white font-semibold px-7 py-3 text-center"
+            href={`mailto:${notifyTo}?subject=Email%20List%20Signup&body=Please%20add%20me%20to%20the%20email%20list:%20${encodeURIComponent(email)}`}
+          >
+            Join
+          </a>
+        </div>
+        <p className="mt-3 text-xs text-gray-500">
+          Tip: For true automation, connect Mailchimp/Flodesk later.
+        </p>
+      </div>
+    </section>
+  );
+}
+EOF
+
+# ----------------------------
+# UploadThing router + route (Logo + Customer Uploads)
+# ----------------------------
+mkdir -p app/api/uploadthing
+cat > app/api/uploadthing/core.ts <<'EOF'
+import { createUploadthing, type FileRouter } from "uploadthing/next";
+
+const f = createUploadthing();
+
+export const ourFileRouter = {
+  // Wholesale logo uploader (1 image)
+  logoUploader: f({ image: { maxFileSize: "8MB", maxFileCount: 1 } })
+    .onUploadComplete(async ({ file }) => {
+      return { url: file.url, name: file.name };
+    }),
+
+  // Customer uploads for custom orders (up to 5 images)
+  orderUploader: f({ image: { maxFileSize: "8MB", maxFileCount: 5 } })
+    .onUploadComplete(async ({ file }) => {
+      return { url: file.url, name: file.name };
+    }),
+} satisfies FileRouter;
+
+export type OurFileRouter = typeof ourFileRouter;
+EOF
+
+cat > app/api/uploadthing/route.ts <<'EOF'
+import { createRouteHandler } from "uploadthing/next";
+import { ourFileRouter } from "./core";
+
+export const { GET, POST } = createRouteHandler({
+  router: ourFileRouter,
+});
+EOF
+
+# ----------------------------
+# Forms (Order + Wholesale)
+# ----------------------------
+cat > app/components/OrderForm.tsx <<'EOF'
+"use client";
+
+import { useState } from "react";
+import { UploadButton } from "@uploadthing/react";
+import type { OurFileRouter } from "../api/uploadthing/core";
+
+type Status = "idle" | "sending" | "sent" | "error";
+
+export default function OrderForm() {
+  const [status, setStatus] = useState<Status>("idle");
+  const [msg, setMsg] = useState("");
+  const [uploadUrls, setUploadUrls] = useState<string[]>([]);
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setStatus("sending");
+    setMsg("");
+
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const payload = Object.fromEntries(formData.entries());
+
+    try {
+      const res = await fetch("/api/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, uploadUrls }),
+      });
+      if (!res.ok) throw new Error("Request failed");
+
+      setStatus("sent");
+      setMsg("Submitted! I’ll follow up with your quote and timeline soon. 🤍");
+      form.reset();
+      setUploadUrls([]);
+    } catch {
+      setStatus("error");
+      setMsg("Something went wrong. Please try again.");
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-5">
+      <div className="grid md:grid-cols-2 gap-4">
+        <input name="name" required placeholder="Full name" className="border rounded-xl px-4 py-3 w-full" />
+        <input name="email" type="email" required placeholder="Email" className="border rounded-xl px-4 py-3 w-full" />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <input name="phone" placeholder="Phone (optional)" className="border rounded-xl px-4 py-3 w-full" />
+        <select name="itemType" required className="border rounded-xl px-4 py-3 w-full">
+          <option value="">Select item type</option>
+          <option value="T-Shirt">T-Shirt</option>
+          <option value="Hoodie">Hoodie</option>
+          <option value="Crewneck">Crewneck</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <input name="quantity" required placeholder="Quantity (e.g., 12)" className="border rounded-xl px-4 py-3 w-full" />
+        <input name="deadline" placeholder="Deadline (optional)" className="border rounded-xl px-4 py-3 w-full" />
+      </div>
+
+      <textarea
+        name="details"
+        required
+        rows={6}
+        placeholder="Describe what you want (theme/colors/text/design idea, sizes, etc.)"
+        className="border rounded-xl px-4 py-3 w-full"
+      />
+
+      <div className="border rounded-xl p-4">
+        <p className="font-semibold mb-2">Customer Uploads (optional)</p>
+        <p className="text-sm text-gray-600 mb-3">
+          Upload inspiration images, logos, or reference pictures (up to 5).
+        </p>
+
+        <UploadButton<OurFileRouter>
+          endpoint="orderUploader"
+          onClientUploadComplete={(res) => {
+            const urls = (res || []).map((f) => f.url).filter(Boolean);
+            if (urls.length) setUploadUrls((prev) => [...prev, ...urls]);
+          }}
+          onUploadError={(error: Error) => {
+            setMsg(error.message);
+            setStatus("error");
+          }}
+        />
+
+        {uploadUrls.length > 0 && (
+          <div className="mt-3 text-sm">
+            <p className="font-semibold">Uploaded files:</p>
+            <ul className="list-disc pl-5">
+              {uploadUrls.map((u) => (
+                <li key={u}>
+                  <a className="text-purple underline" href={u} target="_blank" rel="noreferrer">View</a>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              className="mt-2 underline"
+              onClick={() => setUploadUrls([])}
+            >
+              Clear uploads
+            </button>
+          </div>
+        )}
+      </div>
+
+      <button
+        type="submit"
+        disabled={status === "sending"}
+        className="rounded-full bg-pink text-white font-semibold px-7 py-3 disabled:opacity-60"
+      >
+        {status === "sending" ? "Sending..." : "Submit Request"}
+      </button>
+
+      {msg && <p className={`text-sm ${status === "error" ? "text-red-600" : "text-gray-700"}`}>{msg}</p>}
+    </form>
+  );
+}
+EOF
+
+cat > app/components/WholesaleInquiryForm.tsx <<'EOF'
+"use client";
+
+import { useState } from "react";
+import { UploadButton } from "@uploadthing/react";
+import type { OurFileRouter } from "../api/uploadthing/core";
+
+type Status = "idle" | "sending" | "sent" | "error";
+
+export default function WholesaleInquiryForm() {
+  const [status, setStatus] = useState<Status>("idle");
+  const [msg, setMsg] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setStatus("sending");
+    setMsg("");
+
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const payload = Object.fromEntries(formData.entries());
+
+    try {
+      const res = await fetch("/api/wholesale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, logoUrl }),
+      });
+      if (!res.ok) throw new Error("Request failed");
+
+      setStatus("sent");
+      setMsg("Submitted! I’ll follow up with wholesale pricing + next steps. 🤍");
+      form.reset();
+      setLogoUrl("");
+    } catch {
+      setStatus("error");
+      setMsg("Something went wrong. Please try again.");
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-5">
+      <div className="grid md:grid-cols-2 gap-4">
+        <input name="businessName" required placeholder="Business / Organization name" className="border rounded-xl px-4 py-3 w-full" />
+        <input name="contactName" required placeholder="Contact name" className="border rounded-xl px-4 py-3 w-full" />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <input name="email" type="email" required placeholder="Email" className="border rounded-xl px-4 py-3 w-full" />
+        <input name="phone" placeholder="Phone (optional)" className="border rounded-xl px-4 py-3 w-full" />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <input name="quantity" required placeholder="Estimated quantity (25+)" className="border rounded-xl px-4 py-3 w-full" />
+        <input name="deadline" placeholder="Deadline (optional)" className="border rounded-xl px-4 py-3 w-full" />
+      </div>
+
+      <textarea
+        name="details"
+        required
+        rows={6}
+        placeholder="Tell me what you need (items, colors, sizes, event, etc.)"
+        className="border rounded-xl px-4 py-3 w-full"
+      />
+
+      <div className="border rounded-xl p-4">
+        <p className="font-semibold mb-2">Upload your logo (optional)</p>
+
+        {!logoUrl ? (
+          <UploadButton<OurFileRouter>
+            endpoint="logoUploader"
+            onClientUploadComplete={(res) => {
+              const url = res?.[0]?.url;
+              if (url) setLogoUrl(url);
+            }}
+            onUploadError={(error: Error) => {
+              setMsg(error.message);
+              setStatus("error");
+            }}
+          />
+        ) : (
+          <div className="text-sm">
+            ✅ Uploaded:{" "}
+            <a className="text-purple underline" href={logoUrl} target="_blank" rel="noreferrer">
+              View logo
+            </a>
+            <button type="button" className="ml-3 underline" onClick={() => setLogoUrl("")}>
+              Remove
+            </button>
+          </div>
+        )}
+      </div>
+
+      <button
+        type="submit"
+        disabled={status === "sending"}
+        className="rounded-full bg-purple text-white font-semibold px-7 py-3 disabled:opacity-60"
+      >
+        {status === "sending" ? "Sending..." : "Submit Wholesale Inquiry"}
+      </button>
+
+      {msg && <p className={`text-sm ${status === "error" ? "text-red-600" : "text-gray-700"}`}>{msg}</p>}
+    </form>
+  );
+}
+EOF
+
+# ----------------------------
+# Pages
+# ----------------------------
+cat > app/page.tsx <<'EOF'
+import Hero from "./components/Hero";
+import Products from "./components/Products";
+import PaymentLinks from "./components/PaymentLinks";
+import EmailCapture from "./components/EmailCapture";
+
+export default function Home() {
+  return (
+    <main>
+      <Hero />
+      <Products />
+      <PaymentLinks />
+      <EmailCapture />
+    </main>
+  );
+}
+EOF
+
+cat > app/order/page.tsx <<'EOF'
+import OrderForm from "../components/OrderForm";
+
+export const metadata = {
+  title: "Order Request | The Tangled Wardrobe by Andi",
+  description: "Request a custom apparel order. We’ll confirm pricing and timeline by email.",
+};
+
+export default function OrderPage() {
+  return (
+    <main className="max-w-3xl mx-auto px-6 py-16">
+      <h1 className="text-4xl font-extrabold tracking-tight mb-3">Custom Order Request</h1>
+      <p className="text-gray-700 mb-10">
+        Share your details below and I’ll follow up with a quote + next steps. 🤍
+      </p>
+      <OrderForm />
+    </main>
+  );
+}
+EOF
+
+cat > app/wholesale-inquiry/page.tsx <<'EOF'
+import WholesaleInquiryForm from "../components/WholesaleInquiryForm";
+
+export const metadata = {
+  title: "Wholesale Inquiry | The Tangled Wardrobe by Andi",
+  description: "Wholesale & bulk inquiry form with logo upload.",
+};
+
+export default function WholesaleInquiryPage() {
+  return (
+    <main className="max-w-3xl mx-auto px-6 py-16">
+      <h1 className="text-4xl font-extrabold tracking-tight mb-3">Wholesale Inquiry</h1>
+      <p className="text-gray-700 mb-10">
+        Minimum 25 units. Upload your logo if you have one, and I’ll follow up with pricing + timeline.
+      </p>
+      <WholesaleInquiryForm />
+    </main>
+  );
+}
+EOF
+
+cat > app/vendors/page.tsx <<'EOF'
+export const metadata = {
+  title: "Vendors | The Tangled Wardrobe by Andi",
+  description: "Vendor and event partners. Custom apparel & DTF printing for groups and organizations.",
+};
+
+export default function VendorsPage() {
+  return (
+    <main className="max-w-5xl mx-auto px-6 py-16">
+      <h1 className="text-4xl font-extrabold tracking-tight mb-4">Vendor & Event Partners</h1>
+      <p className="text-gray-700 mb-10">
+        Custom apparel and DTF printing for events, pop-ups, schools, teams, and organizations. Let’s create something bold and professional.
+      </p>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="border rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-2">What I Offer</h2>
+          <ul className="list-disc pl-5 text-gray-700 space-y-1">
+            <li>Event staff shirts & merch</li>
+            <li>Team / fundraiser apparel</li>
+            <li>Branded drops & collections</li>
+            <li>High-quality DTF printing</li>
+          </ul>
+        </div>
+
+        <div className="border rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-2">How to Book</h2>
+          <ol className="list-decimal pl-5 text-gray-700 space-y-1">
+            <li>Send date + quantity + deadline</li>
+            <li>Share logo/design idea</li>
+            <li>Approve mockup</li>
+            <li>Pay deposit to reserve production</li>
+          </ol>
+        </div>
+      </div>
+
+      <div className="mt-10 border rounded-2xl p-6 bg-gray-50">
+        <h2 className="text-xl font-bold mb-2">Wholesale?</h2>
+        <p className="text-gray-700">
+          For bulk pricing and orders, visit the <a className="text-purple underline" href="/wholesale">Wholesale</a> page or submit an inquiry.
+        </p>
+      </div>
+    </main>
+  );
+}
+EOF
+
+cat > app/wholesale/page.tsx <<'EOF'
+export const metadata = {
+  title: "Wholesale | The Tangled Wardrobe by Andi",
+  description: "Wholesale & bulk orders. Minimum 25 units.",
+};
+
+export default function WholesalePage() {
+  return (
+    <main className="max-w-5xl mx-auto px-6 py-16">
+      <h1 className="text-4xl font-extrabold tracking-tight mb-4">Wholesale & Bulk Orders</h1>
+      <p className="text-gray-700 mb-10">
+        Wholesale is ideal for schools, teams, brands, churches, reunions, and events. Minimum order: <b>25 units</b>.
+      </p>
+
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="border rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-3">Wholesale Pricing</h2>
+
+          <div className="space-y-6 text-gray-700">
+            <div>
+              <h3 className="font-semibold">T-Shirts (25+ units)</h3>
+              <ul className="list-disc pl-5">
+                <li>25–49: $18 each</li>
+                <li>50–99: $16 each</li>
+                <li>100+: $14 each</li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="font-semibold">Hoodies/Crewnecks (25+ units)</h3>
+              <ul className="list-disc pl-5">
+                <li>25–49: $30 each</li>
+                <li>50–99: $28 each</li>
+                <li>100+: $26 each</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div className="border rounded-2xl p-6">
+          <h2 className="text-xl font-bold mb-3">How Wholesale Works</h2>
+          <ol className="list-decimal pl-5 text-gray-700 space-y-1">
+            <li>Send quantity, sizes, deadline, and design idea</li>
+            <li>Receive quote + proof</li>
+            <li>Pay 50% deposit</li>
+            <li>Approve proof → production begins</li>
+            <li>Balance due prior to delivery/pickup</li>
+          </ol>
+
+          <div className="mt-6 p-4 rounded-xl bg-gray-50">
+            <p className="text-sm text-gray-700">
+              Ready to start? Submit the <a className="text-purple underline" href="/wholesale-inquiry">Wholesale Inquiry Form</a>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+EOF
+
+cat > app/payments/page.tsx <<'EOF'
+export const metadata = {
+  title: "Payments | The Tangled Wardrobe by Andi",
+  description: "Pay via Stripe payment links or Zelle.",
+};
+
+export default function PaymentsPage() {
+  const zelleName = process.env.NEXT_PUBLIC_ZELLE_RECIPIENT_NAME || "Andi Naylor";
+  const zelle = process.env.NEXT_PUBLIC_ZELLE_RECIPIENT || "";
+
+  return (
+    <main className="max-w-3xl mx-auto px-6 py-16">
+      <h1 className="text-4xl font-extrabold tracking-tight mb-4">Payments</h1>
+      <p className="text-gray-700 mb-10">
+        Choose Stripe for fast checkout or Zelle for direct payment. 🤍
+      </p>
+
+      <section className="border rounded-2xl p-6 mb-8">
+        <h2 className="text-xl font-bold mb-3">Stripe Payment Links</h2>
+        <ul className="list-disc pl-5 space-y-2">
+          <li>
+            <a className="text-purple underline" href={process.env.NEXT_PUBLIC_STRIPE_PAYMENTLINK_SHIRT} target="_blank" rel="noreferrer">
+              Pay for T-Shirt
+            </a>
+          </li>
+          <li>
+            <a className="text-purple underline" href={process.env.NEXT_PUBLIC_STRIPE_PAYMENTLINK_HOODIE} target="_blank" rel="noreferrer">
+              Pay for Hoodie/Crewneck
+            </a>
+          </li>
+          <li>
+            <a className="text-purple underline" href={process.env.NEXT_PUBLIC_STRIPE_PAYMENTLINK_CUSTOM_DEPOSIT} target="_blank" rel="noreferrer">
+              Pay Custom Order Deposit
+            </a>
+          </li>
+        </ul>
+      </section>
+
+      <section className="border rounded-2xl p-6 bg-gray-50">
+        <h2 className="text-xl font-bold mb-3">Zelle</h2>
+        <p className="text-gray-700">
+          Send Zelle to: <b>{zelleName}</b><br />
+          Zelle email/phone: <b>{zelle}</b>
+        </p>
+        <p className="text-sm text-gray-600 mt-4">
+          In the memo, include: <b>Your name + Order type</b> (e.g., “Jasmine – 12 shirts”).
+        </p>
+      </section>
+    </main>
+  );
+}
+EOF
+
+# ----------------------------
+# API Routes (Resend emails)
+# ----------------------------
+mkdir -p app/api/order app/api/wholesale
+
+cat > app/api/order/route.ts <<'EOF'
+import { Resend } from "resend";
+import { z } from "zod";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+const Schema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  phone: z.string().optional().nullable(),
+  itemType: z.string().min(1),
+  quantity: z.string().min(1),
+  deadline: z.string().optional().nullable(),
+  details: z.string().min(10),
+  uploadUrls: z.array(z.string().url()).optional().default([]),
+});
+
+export async function POST(req: Request) {
+  try {
+    const data = Schema.parse(await req.json());
+
+    const uploadsHtml =
+      data.uploadUrls && data.uploadUrls.length
+        ? `<p><b>Customer Uploads:</b></p><ul>${data.uploadUrls
+            .map((u) => `<li><a href="${u}">${u}</a></li>`)
+            .join("")}</ul>`
+        : `<p><b>Customer Uploads:</b> —</p>`;
+
+    await resend.emails.send({
+      from: process.env.NOTIFY_EMAIL_FROM!,
+      to: process.env.NOTIFY_EMAIL_TO!,
+      subject: `New Order Request — ${data.itemType} (${data.quantity})`,
+      html: `
+        <h2>New Custom Order Request</h2>
+        <p><b>Name:</b> ${escapeHtml(data.name)}</p>
+        <p><b>Email:</b> ${escapeHtml(data.email)}</p>
+        <p><b>Phone:</b> ${escapeHtml(data.phone || "—")}</p>
+        <p><b>Item Type:</b> ${escapeHtml(data.itemType)}</p>
+        <p><b>Quantity:</b> ${escapeHtml(data.quantity)}</p>
+        <p><b>Deadline:</b> ${escapeHtml(data.deadline || "—")}</p>
+        <p><b>Details:</b><br/>${escapeHtml(data.details).replace(/\\n/g, "<br/>")}</p>
+        ${uploadsHtml}
+      `,
+    });
+
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: e?.message }), { status: 400 });
+  }
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c] as string));
+}
+EOF
+
+cat > app/api/wholesale/route.ts <<'EOF'
+import { Resend } from "resend";
+import { z } from "zod";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+const Schema = z.object({
+  businessName: z.string().min(2),
+  contactName: z.string().min(2),
+  email: z.string().email(),
+  phone: z.string().optional().nullable(),
+  quantity: z.string().min(1),
+  deadline: z.string().optional().nullable(),
+  details: z.string().min(10),
+  logoUrl: z.string().url().optional().nullable(),
+});
+
+export async function POST(req: Request) {
+  try {
+    const data = Schema.parse(await req.json());
+
+    await resend.emails.send({
+      from: process.env.NOTIFY_EMAIL_FROM!,
+      to: process.env.NOTIFY_EMAIL_TO!,
+      subject: `Wholesale Inquiry — ${data.businessName} (${data.quantity})`,
+      html: `
+        <h2>Wholesale Inquiry</h2>
+        <p><b>Organization:</b> ${escapeHtml(data.businessName)}</p>
+        <p><b>Contact:</b> ${escapeHtml(data.contactName)}</p>
+        <p><b>Email:</b> ${escapeHtml(data.email)}</p>
+        <p><b>Phone:</b> ${escapeHtml(data.phone || "—")}</p>
+        <p><b>Quantity:</b> ${escapeHtml(data.quantity)}</p>
+        <p><b>Deadline:</b> ${escapeHtml(data.deadline || "—")}</p>
+        <p><b>Logo:</b> ${data.logoUrl ? `<a href="${data.logoUrl}">View/Download</a>` : "—"}</p>
+        <p><b>Details:</b><br/>${escapeHtml(data.details).replace(/\\n/g, "<br/>")}</p>
+      `,
+    });
+
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: e?.message }), { status: 400 });
+  }
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c] as string));
+}
+EOF
+
+# ----------------------------
+# SEO: sitemap + robots
+# ----------------------------
+cat > app/sitemap.ts <<'EOF'
+export default function sitemap() {
+  const base = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  return [
+    { url: `${base}/`, lastModified: new Date() },
+    { url: `${base}/order`, lastModified: new Date() },
+    { url: `${base}/payments`, lastModified: new Date() },
+    { url: `${base}/vendors`, lastModified: new Date() },
+    { url: `${base}/wholesale`, lastModified: new Date() },
+    { url: `${base}/wholesale-inquiry`, lastModified: new Date() },
+  ];
+}
+EOF
+
+cat > app/robots.ts <<'EOF'
+export default function robots() {
+  const base = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  return {
+    rules: [{ userAgent: "*", allow: "/" }],
+    sitemap: `${base}/sitemap.xml`,
+  };
+}
+EOF
+
+# ----------------------------
+# Layout: metadata + JSON-LD + analytics scripts
+# ----------------------------
+cat > app/layout.tsx <<'EOF'
+import "./globals.css";
+import Script from "next/script";
+import Navbar from "./components/Navbar";
+import Footer from "./components/Footer";
+
+export const metadata = {
+  title: "The Tangled Wardrobe by Andi | Custom Apparel & DTF Printing",
+  description: "Custom apparel and DTF printing in Evans, Georgia. Be Bold. Be Confident. Go Get Tangled.",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+
+  const ga = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
+  const metaPixel = process.env.NEXT_PUBLIC_META_PIXEL_ID;
+  const tiktokPixel = process.env.NEXT_PUBLIC_TIKTOK_PIXEL_ID;
+
+  const localBusinessJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    name: "The Tangled Wardrobe by Andi",
+    url: siteUrl,
+    address: {
+      "@type": "PostalAddress",
+      addressLocality: "Evans",
+      addressRegion: "GA",
+      addressCountry: "US",
+    },
+    areaServed: "Evans, GA and surrounding areas",
+    description: "Custom apparel and DTF printing. Woman-owned small business established 2023.",
+  };
+
+  return (
+    <html lang="en">
+      <body>
+        {/* Google Analytics (GA4) */}
+        {ga && (
+          <>
+            <Script async src={`https://www.googletagmanager.com/gtag/js?id=${ga}`} />
+            <Script id="ga4">
+              {`
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){dataLayer.push(arguments);}
+                gtag('js', new Date());
+                gtag('config', '${ga}');
+              `}
+            </Script>
+          </>
+        )}
+
+        {/* Meta Pixel */}
+        {metaPixel && (
+          <Script id="meta-pixel">
+            {`
+              !function(f,b,e,v,n,t,s)
+              {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+              n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+              if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+              n.queue=[];t=b.createElement(e);t.async=!0;
+              t.src=v;s=b.getElementsByTagName(e)[0];
+              s.parentNode.insertBefore(t,s)}(window, document,'script',
+              'https://connect.facebook.net/en_US/fbevents.js');
+              fbq('init', '${metaPixel}');
+              fbq('track', 'PageView');
+            `}
+          </Script>
+        )}
+
+        {/* TikTok Pixel */}
+        {tiktokPixel && (
+          <Script id="tiktok-pixel">
+            {`
+              !function (w, d, t) {
+                w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];
+                ttq.methods=["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie"];
+                ttq.setAndDefer=function(t,e){t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))};};
+                for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);
+                ttq.load=function(e,n){var i="https://analytics.tiktok.com/i18n/pixel/events.js";
+                ttq._i=ttq._i||{};ttq._i[e]=[];ttq._i[e]._u=i;ttq._t=ttq._t||{};ttq._t[e]=+new Date;ttq._o=ttq._o||{};
+                ttq._o[e]=n||{};var o=d.createElement("script");o.type="text/javascript";o.async=!0;o.src=i+"?sdkid="+e+"&lib="+t;
+                var a=d.getElementsByTagName("script")[0];a.parentNode.insertBefore(o,a);};
+                ttq.load('${tiktokPixel}');
+                ttq.page();
+              }(window, document, 'ttq');
+            `}
+          </Script>
+        )}
+
+        {/* LocalBusiness JSON-LD */}
+        <Script id="localbusiness-jsonld" type="application/ld+json">
+          {JSON.stringify(localBusinessJsonLd)}
+        </Script>
+
+        <Navbar />
+        {children}
+        <Footer />
+      </body>
+    </html>
+  );
+}
+EOF
+
+echo ""
+echo "✅ Build complete!"
+echo ""
+echo "Next steps:"
+echo "1) cd $PROJECT_DIR"
+echo "2) npm run dev"
+echo ""
+echo "When you're ready to deploy: push to GitHub and import into Vercel."
+echo "Note: Customer uploads on Order form are enabled via UploadThing (orderUploader)."
