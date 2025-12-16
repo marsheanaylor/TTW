@@ -1,0 +1,6 @@
+git init
+git add .
+git commit -m "Initial Tangled Wardrobe site"
+git branch -M main
+git remote add origin https://github.com/YOURUSERNAME/tangled-wardrobe.git
+git push -u origin main
